@@ -1,0 +1,270 @@
+---
+title: "NYPD Shooting Incident Data Report"
+date: "02/04/2022"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r load-packages, include=FALSE}
+library(tidyverse)
+library(tinytex)
+library(lubridate)
+library(leaflet)
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import Dataset "NYPD Shooting Incident
+
+This dataset is located here <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>
+
+### Description
+
+This dataset lists of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year.
+
+This data is manually extracted every quarter and reviewed by the Office of Management Analysis and Planning before being posted on the NYPD website. Each record represents a shooting incident in NYC and includes information about the event, the location and time of occurrence. In addition, information related to suspect and victim demographics is also included. This data can be used by the public to explore the nature of shooting/criminal activity. 
+
+### Import of the dataset
+
+We import data directly from the NY site web and store it
+
+``` {r import_dataset}
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+NYPD_Shooting <- read.csv(url)
+```
+
+## Cleaning and vizualisation
+
+### Dataset Clean up
+
+We have several column to clean, first we will remove some column where some values are missing and we could not recover easily :
+
+* LOCATION_DESC
+* PERP_AGE_GROUP
+* PERP_SEX
+* PERP_RACE
+
+But, we can use the missing as a non-resolved case.
+
+Also, we will remove variables we won't use :
+
+* INCIDENT KEY
+* PRECINCT
+* JURIDICTION CODE
+* STATISTICAL_MURDER_FLAG
+* X_COORD_CD
+* Y_COORD_CD
+* Lon_Lat
+
+Then, we will create 4 new variables we will use for our analyze and visualization :
+
+* OCCUR_DATE_YEAR
+* OCCUR_DATE_MONTH
+* OCCUR_DATE_MY
+* OCCUR_DATE_HOUR
+
+Finally, we will modify the type of data to character to date of :
+
+* OCCUR_DATE
+* OCCUR_TIME
+
+``` {r date_clean_up}
+NYPD_Shooting <- NYPD_Shooting %>% 
+  # Select variables
+  select(c(OCCUR_DATE, OCCUR_TIME, BORO, STATISTICAL_MURDER_FLAG, PERP_AGE_GROUP, PERP_SEX, PERP_RACE, 
+           VIC_AGE_GROUP, VIC_SEX, VIC_RACE, Latitude, Longitude)) %>% 
+  
+  # Modify variable type
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE), OCCUR_TIME= hms(OCCUR_TIME)) %>%
+  mutate(BORO = recode_factor(BORO, "BRONX" = "BRONX", "QUEENS" = "QUEENS", "MANHATTAN" = "MANHATTAN", "BROOKLYN" = "BROOKLYN", "STATEN ISLAND" = "STATEN ISLAND", .default = "UNKNOWN")) %>%
+  mutate(PERP_SEX = recode_factor(PERP_SEX, "M" = "MALE", "F" = "FEMALE",  .default = "UNKNOWN")) %>%
+  mutate(STATISTICAL_MURDER_FLAG = recode_factor(STATISTICAL_MURDER_FLAG, "true" = TRUE, "false" = FALSE)) %>%
+  mutate(PERP_RACE = recode_factor(PERP_RACE, "WHITE" = "WHITE", "WHITE HISPANIC" = "WHITE HISPANIC", "BLACK" = "BLACK", "BLACK HISPANIC" = "BLACK HISPANIC", "ASIAN / PACIFIC ISLANDER" = "ASIAN / PACIFIC ISLANDER", "AMERICAN INDIAN/ALASKAN NATIVE" = "AMERICAN INDIAN/ALASKAN NATIVE", .default = "UNKNOWN")) %>%
+  mutate(PERP_AGE_GROUP = recode_factor(PERP_AGE_GROUP, "<18" = "<18", "18-24" = "18-24", "25-44"="25-44", "45-64"="45-64", "65+" = "65+", "UNKNOWN" = "UNKNOWN", .default = "UNKNOWN")) %>%
+  mutate(VIC_SEX = recode_factor(VIC_SEX, "M" = "MALE", "F" = "FEMALE",  .default = "UNKNOWN")) %>%
+  mutate(VIC_RACE = recode_factor(VIC_RACE, "WHITE" = "WHITE", "WHITE HISPANIC" = "WHITE HISPANIC", "BLACK" = "BLACK", "BLACK HISPANIC" = "BLACK HISPANIC", "ASIAN / PACIFIC ISLANDER" = "ASIAN / PACIFIC ISLANDER", "AMERICAN INDIAN/ALASKAN NATIVE" = "AMERICAN INDIAN/ALASKAN NATIVE", .default = "UNKNOWN")) %>%
+  mutate(VIC_AGE_GROUP = recode_factor(VIC_AGE_GROUP, "<18" = "<18", "18-24" = "18-24", "25-44"="25-44", "45-64"="45-64", "65+" = "65+", "UNKNOWN" = "UNKNOWN", .default = "UNKNOWN")) %>%
+  
+  # Create new variables
+  mutate(OCCUR_DATE_YEAR = year(OCCUR_DATE), OCCUR_DATE_MONTH = month(OCCUR_DATE)) %>%
+  mutate(OCCUR_DATE_MY = make_datetime(OCCUR_DATE_YEAR, OCCUR_DATE_MONTH)) %>%
+  mutate(OCCUR_DATE_WEEKDAY = wday(OCCUR_DATE))
+```
+
+``` {r summary}
+summary(NYPD_Shooting)
+```
+
+## Visualize Data
+
+First, we will visualize the number of shoot per month from 2006 to 2020
+
+``` {r count_date}
+NYPD_Shooting_location <- NYPD_Shooting %>% group_by(OCCUR_DATE_MY) %>% 
+  count(OCCUR_DATE_MY, name='SHOOTING_COUNT') %>% ungroup()
+```
+
+``` {r visualize_date}
+NYPD_Shooting_location %>% 
+  filter(SHOOTING_COUNT > 0) %>% 
+  ggplot(aes(x = OCCUR_DATE_MY, y = SHOOTING_COUNT)) + 
+  geom_line(aes(color = "OCCUR_DATE_MY")) +
+  geom_point(aes(color = "OCCUR_DATE_MY")) + 
+  theme(legend.position = "bottom", axis.text.x = element_text(angle=90))+
+  labs(title = "NYPD Shooting per date", y = NULL)
+
+  
+```
+
+``` {r visualize_date_map}
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(data = NYPD_Shooting,
+                   lng = ~Longitude,
+                   lat = ~Latitude,
+                   radius = ~2,
+                   stroke = FALSE, fillOpacity = 0.1) 
+```
+
+## Data Analyzing
+
+We will analyze two cases : 
+
+* Shooting per day week and month
+* Shooting per location
+
+with and without knowing the Perpetrator, assuming a resolved case or not
+
+### Analyze by Time
+
+#### Analyze per Month
+
+``` {r count_month}
+NYPD_Shooting_month <- NYPD_Shooting %>% group_by(OCCUR_DATE_MONTH) %>% 
+  count(OCCUR_DATE_MONTH, name='SHOOTING_COUNT_MONTH') %>% ungroup()
+```
+
+``` {r visualize_month}
+NYPD_Shooting_month %>% 
+  ggplot(aes(x = OCCUR_DATE_MONTH, y = SHOOTING_COUNT_MONTH)) + 
+  geom_line(aes(color = "MONTH")) +
+  geom_point(aes(color = "MONTH")) + 
+  theme(legend.position = "bottom")+
+  labs(title = "NYPD Shooting per Month")
+```
+
+``` {r count_month_resolved}
+NYPD_Shooting_month_resolved <- NYPD_Shooting %>% 
+  filter(PERP_AGE_GROUP != "UNKNOWN") %>%
+  group_by(OCCUR_DATE_MONTH) %>% 
+  count(OCCUR_DATE_MONTH, name='SHOOTING_COUNT_MONTH') %>% 
+  ungroup()
+```
+
+``` {r visualize_month_resolved}
+NYPD_Shooting_month_resolved %>% 
+  ggplot(aes(x = OCCUR_DATE_MONTH, y = SHOOTING_COUNT_MONTH)) + 
+  geom_line(aes(color = "MONTH")) +
+  geom_point(aes(color = "MONTH")) + 
+  theme(legend.position = "bottom")+
+  labs(title = "NYPD Shooting per Month resolved")
+```
+
+We can conclude that is was during the summer time that injurious-shooting occurs the most often. Resolved case don't follow this tread
+
+### Analyze by Location
+
+``` {r count_location_resolved}
+NYPD_Shooting_resolved <- NYPD_Shooting %>% 
+  filter(PERP_AGE_GROUP != "UNKNOWN")
+```
+
+``` {r visualize_date_map_resolved}
+leaflet() %>%
+  addTiles() %>%
+  addCircleMarkers(data = NYPD_Shooting_resolved,
+                   lng = ~Longitude,
+                   lat = ~Latitude,
+                   radius = ~2,
+                   stroke = FALSE, fillOpacity = 0.1) 
+```
+
+``` {r count_sectors}
+NYPD_Shooting_Boro <- NYPD_Shooting %>% 
+  group_by(OCCUR_DATE_MONTH, BORO) %>% 
+  count(OCCUR_DATE_MONTH, name='SHOOTING_COUNT_BORO') %>% ungroup()
+```
+
+``` {r visualize_month_boro}
+NYPD_Shooting_Boro %>% 
+  ggplot(aes(x = OCCUR_DATE_MONTH, y = SHOOTING_COUNT_BORO)) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="BRONX"), 
+            aes(color = "BRONX")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="BRONX"), 
+             aes(color = "BRONX")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="MANHATTAN"), 
+            aes(color = "MANHATTAN")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="MANHATTAN"), 
+             aes(color = "MANHATTAN")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="QUEENS"), 
+            aes(color = "QUEENS")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="QUEENS"), 
+             aes(color = "QUEENS")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="BROOKLYN"), 
+            aes(color = "BROOKLYN")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="BROOKLYN"), 
+             aes(color = "BROOKLYN")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="STATEN ISLAND"), 
+            aes(color = "STATEN ISLAND")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="STATEN ISLAND"), 
+             aes(color = "STATEN ISLAND")) +
+  theme(legend.position = "bottom")+
+  labs(title = "NYPD Shooting per Sectors")
+```
+
+``` {r count_sectors_resolved}
+NYPD_Shooting_Boro_resolved <- NYPD_Shooting_resolved %>%
+  group_by(OCCUR_DATE_MONTH, BORO) %>% 
+  count(OCCUR_DATE_MONTH, name='SHOOTING_COUNT_BORO') %>% ungroup()
+```
+
+``` {r visualize_month_boro_resolved}
+NYPD_Shooting_Boro_resolved %>% 
+  ggplot(aes(x = OCCUR_DATE_MONTH, y = SHOOTING_COUNT_BORO)) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="BRONX"), 
+            aes(color = "BRONX")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="BRONX"), 
+             aes(color = "BRONX")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="MANHATTAN"), 
+            aes(color = "MANHATTAN")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="MANHATTAN"), 
+             aes(color = "MANHATTAN")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="QUEENS"), 
+            aes(color = "QUEENS")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="QUEENS"), 
+             aes(color = "QUEENS")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="BROOKLYN"), 
+            aes(color = "BROOKLYN")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="BROOKLYN"), 
+             aes(color = "BROOKLYN")) + 
+  geom_line(data=subset(NYPD_Shooting_Boro, BORO =="STATEN ISLAND"), 
+            aes(color = "STATEN ISLAND")) +
+  geom_point(data=subset(NYPD_Shooting_Boro, BORO =="STATEN ISLAND"), 
+             aes(color = "STATEN ISLAND")) +
+  theme(legend.position = "bottom")+
+  labs(title = "NYPD Shooting resolved per Sectors")
+```
+
+We could see that only sectors "Brooklyn" and "Bronx" increase during the summertime. The others don't. The percentage of resolved cases remains the same all along the year
+
+### Bias
+
+It easy to conclude about shooting versus sectors, but we have to take account population also, it wasn't the case here.
+
+``` {r session_Info}
+sessionInfo()
+  
+```
